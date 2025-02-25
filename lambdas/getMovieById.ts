@@ -1,18 +1,17 @@
 import { Handler } from "aws-lambda";
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { APIGatewayProxyHandlerV2 } from "aws-lambda";
-
 
 const ddbDocClient = createDDbDocClient();
 
-export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {     // Note change
+export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
   try {
     console.log("[EVENT]", JSON.stringify(event));
-    const parameters  = event?.pathParameters;
+    const parameters = event?.pathParameters;
     const movieId = parameters?.movieId ? parseInt(parameters.movieId) : undefined;
-
+    const queryParams = event?.queryStringParameters;
 
     if (!movieId) {
       return {
@@ -24,13 +23,16 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {    
       };
     }
 
+  
     const commandOutput = await ddbDocClient.send(
       new GetCommand({
         TableName: process.env.TABLE_NAME,
         Key: { id: movieId },
       })
     );
+    
     console.log("GetCommand response: ", commandOutput);
+
     if (!commandOutput.Item) {
       return {
         statusCode: 404,
@@ -40,17 +42,31 @@ export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {    
         body: JSON.stringify({ Message: "Invalid movie Id" }),
       };
     }
-    const body = {
+
+    const responseBody = {
       data: commandOutput.Item,
     };
 
-    // Return Response
+  
+    if (queryParams?.cast === "true") {
+      const castCommandOutput = await ddbDocClient.send(
+        new QueryCommand({
+          TableName: process.env.CAST_TABLE_NAME, 
+          KeyConditionExpression: "movieId = :m",
+          ExpressionAttributeValues: { ":m": movieId },
+        })
+      );
+      
+      responseBody.data.cast = castCommandOutput.Items || [];
+    }
+
+  
     return {
       statusCode: 200,
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(responseBody),
     };
   } catch (error: any) {
     console.log(JSON.stringify(error));
